@@ -22,6 +22,9 @@ interface Product {
   description: string
   price: string // in USD
   image: string
+  network?: string
+  owner?: string
+  token_address?: `0x${string}`
 }
 
 interface Token {
@@ -56,6 +59,7 @@ const availableChains: Chain[] = [
   { id: 56, name: "Binance Smart Chain", networkEnum: NetworkEnum.BINANCE },
   { id: 10, name: "Optimism", networkEnum: NetworkEnum.OPTIMISM },
   { id: 42161, name: "Arbitrum", networkEnum: NetworkEnum.ARBITRUM },
+  { id: 8453, name: "Base", networkEnum: NetworkEnum.COINBASE },
 ]
 
 // Payment steps
@@ -69,28 +73,31 @@ enum PaymentStep {
 }
 
 // Helper function to extract numeric value from price string
+// Assumes priceString will only contain an integer string if valid.
 const getNumericPrice = (priceString: string | undefined | null): string => {
-  if (!priceString) return "0";
-  try {
-    // Check if the format includes "$", e.g., "X = $Y"
-    if (priceString.includes('$')) {
-      const parts = priceString.split('$');
-      // Get the part after '$' and trim whitespace
-      const numericPart = parts[1]?.trim();
-      // Check if the extracted part is a valid number string
-      if (numericPart && !isNaN(parseFloat(numericPart))) {
-        return numericPart;
-      }
-    }
-    // Check if the priceString itself is already a valid number string
-    else if (!isNaN(parseFloat(priceString))) {
-         return priceString;
-    }
-    // Log a warning and return "0" if the format is unexpected
-    console.warn("Unexpected product price format encountered:", priceString);
+  console.log("getNumericPrice input (expecting integer string):", priceString);
+  if (!priceString) {
+    console.log("getNumericPrice: Input is null or undefined, returning '0'");
     return "0";
+  }
+  try {
+    // Attempt to parse the input string directly as a floating point number
+    const numericValue = parseFloat(priceString);
+
+    // Check if the parsing resulted in a valid number (not NaN)
+    if (!isNaN(numericValue)) {
+      console.log("getNumericPrice: Parsed valid number:", numericValue);
+      // Convert the number back to a string for consistency
+      return String(numericValue);
+    } else {
+      // If parsing fails (e.g., input was not a number string like "abc")
+      console.warn("getNumericPrice: Input could not be parsed as a number, returning '0' for input:", priceString);
+      return "0";
+    }
+
   } catch (e) {
-    console.error("Error parsing product price:", priceString, e);
+    // Catch any unexpected errors during parsing
+    console.error("getNumericPrice: Error parsing price:", priceString, e);
     return "0";
   }
 };
@@ -120,9 +127,9 @@ const PaymentPage = () => {
   useEffect(() => {
     if (product_id) {
       setIsLoading(true)
-      fetch(`https://api.catkin.network/product/product/${product_id}`)
+      fetch(`http://localhost:8000/product/product/${product_id}`)
         .then((res) => res.json())
-        .then((data) => {
+        .then((data: Product & { network?: string; token_address?: `0x${string}` }) => {
           setProduct(data)
           setIsLoading(false)
         })
@@ -134,16 +141,28 @@ const PaymentPage = () => {
     }
   }, [product_id])
 
+  // Define the mapping from network name string to NetworkEnum
+  const networkNameToEnumMap: { [key: string]: NetworkEnum } = {
+    "Ethereum": NetworkEnum.ETHEREUM,
+    "Polygon": NetworkEnum.POLYGON,
+    "Binance Smart Chain": NetworkEnum.BINANCE,
+    "Optimism": NetworkEnum.OPTIMISM,
+    "Arbitrum": NetworkEnum.ARBITRUM,
+    "Base": NetworkEnum.COINBASE,
+    // Add other mappings if needed
+  };
+
   // Check token allowance
-  console.log("selectedToken", selectedToken)   
+  console.log("selectedToken", selectedToken)
   console.log("selectedChain", selectedChain)
-  const { data: allowance, refetch: refetchAllowance } = useContractRead({
+  const { data: allowance, refetch: refetchAllowance, isLoading: isAllowanceLoading } = useContractRead({
     address: selectedToken?.address,
     abi: erc20Abi,
     functionName: "allowance",
     args: [address as `0x${string}`, INCH_AGGREGATOR_ADDRESS as `0x${string}`],
   })
 
+  console.log("allowance", allowance)
   // Approve token spending
   const {
     writeContract: approveToken,
@@ -162,9 +181,12 @@ const PaymentPage = () => {
   } = useFusionPlusTransfer({
     // Use the processed numericPrice for amount calculation
     amount: parseUnits(numericPrice, selectedToken?.decimals || 18).toString(),
-    dstChainId: selectedChain?.networkEnum || NetworkEnum.ETHEREUM,
-    srcTokenAddress: selectedToken?.address || "0x6b175474e89094c44da98b954eedeac495271d0f",
-    dstTokenAddress: "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee", // Default to ETH as destination
+    // Use the mapping and product.network to set dstChainId
+    // Default to ETHEREUM if product or network is unavailable or not mapped
+    dstChainId: networkNameToEnumMap[product?.network || ""] || NetworkEnum.ETHEREUM,
+    dstAddress: product?.owner || address as `0x${string}`,
+    srcTokenAddress: selectedToken?.address || "0x6b175474e89094c44da98b954eedeac495271d0f", // Consider if this needs adjustment based on selectedChain
+    dstTokenAddress: product?.token_address || "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee", // Use token_address from product, fallback to native token
   })
 
   // Effect to handle allowance approval success
@@ -260,21 +282,48 @@ const PaymentPage = () => {
   const handleConfirmPayment = async () => {
     if (!selectedToken || !selectedChain) return
 
-    // For ETH, no allowance check needed
+    // For ETH, no allowance check needed, proceed directly to transfer
     if (selectedToken.address === "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee") {
+      console.log("Native token selected, skipping allowance check.")
       setCurrentStep(PaymentStep.TRANSFER_PROCESS)
       return
     }
 
-    // Check allowance
-    setCurrentStep(PaymentStep.ALLOWANCE_CHECK)
-    await refetchAllowance()
+    // For ERC20 tokens, check allowance first
+    console.log("ERC20 token selected, checking allowance...")
+    setIsLoading(true) // Show loading indicator while checking allowance
+    setError(null)
 
-    // Use the processed numericPrice for required amount calculation
-    const requiredAmount = parseUnits(numericPrice, selectedToken.decimals)
-    if (allowance && allowance >= requiredAmount) {
-      setCurrentStep(PaymentStep.TRANSFER_PROCESS)
+    try {
+      // Refetch the latest allowance
+      const { data: currentAllowance } = await refetchAllowance()
+      console.log("Refetched allowance:", currentAllowance)
+
+      // Calculate the required amount in the token's smallest unit (BigInt)
+      const requiredAmount = parseUnits(numericPrice, selectedToken.decimals)
+      console.log("Required amount (BigInt):", requiredAmount)
+
+      // Compare allowance with required amount (handle potential undefined allowance)
+      if (currentAllowance !== undefined && currentAllowance !== null && currentAllowance >= requiredAmount) {
+        console.log("Allowance is sufficient, skipping approval step.")
+        setCurrentStep(PaymentStep.TRANSFER_PROCESS)
+      } else {
+        console.log("Allowance is insufficient or not found, proceeding to approval step.")
+        setCurrentStep(PaymentStep.ALLOWANCE_CHECK)
+      }
+    } catch (err) {
+      console.error("Error checking allowance:", err)
+      setError("Failed to check token allowance. Please try again.")
+      // Optionally stay on the current step or move to an error state
+    } finally {
+      setIsLoading(false)
     }
+
+    // console.log("numericPrice", numericPrice)
+    // console.log("product price", product?.price)
+    // The old logic is replaced by the checks above
+    // setCurrentStep(PaymentStep.ALLOWANCE_CHECK)
+    // await refetchAllowance()
   }
 
   // Handle transfer execution
@@ -415,24 +464,9 @@ const PaymentPage = () => {
                           : "border-gray-300 hover:border-blue-300"
                       }`}
                     >
-                      <div className="w-8 h-8 relative mr-2 flex items-center justify-center bg-gray-200 rounded-full">
-                        {/* Basic check if image exists or use placeholder */}
-                        <Image
-                          src={token.logoURI || "/placeholder.svg"}
-                          alt={token.symbol}
-                          width={24}
-                          height={24}
-                          className="rounded-full"
-                          // Add onError handler if you want to replace broken images
-                          onError={(e) => {
-                             const target = e.target as HTMLImageElement;
-                             target.src = '/placeholder.svg'; // Fallback image
-                          }}
-                        />
-                      </div>
-                      <div className="flex-1 text-left">
+                
+                      <div className="flex-1 text-left mx-12">
                         <div className="font-medium">{token.symbol}</div>
-                        {/* Display symbol again if name is just symbol */}
                         {/* <div className="text-xs text-gray-500">{token.name}</div> */}
                       </div>
                     </button>
@@ -511,38 +545,47 @@ const PaymentPage = () => {
           To proceed with the payment, you need to approve the 1inch aggregator to use your {selectedToken?.symbol}.
         </p>
 
-        {allowance && product?.price && selectedToken ? (
+        {/* Check if product and token are selected before showing details */}
+        {product?.price && selectedToken ? (
           <div className="bg-gray-100 p-4 rounded-md">
             <div className="flex justify-between">
               <span>Current allowance:</span>
               <span>
-                {formatUnits(allowance, selectedToken.decimals)} {selectedToken.symbol}
+                {isAllowanceLoading ? ( // Check if allowance is loading
+                  <div className="animate-spin rounded-full h-4 w-4 border-t-2 border-b-2 border-blue-500 inline-block"></div>
+                ) : (
+                  // Display 0 if allowance is undefined/null, otherwise format it
+                  `${allowance !== undefined && allowance !== null ? formatUnits(allowance, selectedToken.decimals) : '0'} ${selectedToken.symbol}`
+                )}
               </span>
             </div>
             <div className="flex justify-between">
               <span>Required amount:</span>
               <span>
                 {/* Display the original product price string here, formatting is for calculation only */}
-                {product.price} {selectedToken.symbol}
+                {/* Using numericPrice as it's used for the actual approval amount */}
+                {product?.price} {selectedToken.symbol}
               </span>
             </div>
           </div>
         ) : (
+          // Optional: Show a message if product/token are not ready yet
           <div className="flex justify-center items-center h-20">
-            <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-blue-500"></div>
+             <p className="text-gray-500">Loading payment details...</p>
           </div>
         )}
 
         <button
           onClick={() => {
             // Use the processed numericPrice when calling approveToken
-            if (selectedToken && numericPrice !== "0") {
+            if (selectedToken && product?.price !== "0") {
               approveToken({
                 address: selectedToken.address,
                 abi: erc20Abi,
                 functionName: "approve",
                 args: [INCH_AGGREGATOR_ADDRESS as `0x${string}`, parseUnits(numericPrice, selectedToken.decimals)],
               })
+              console.log("approveToken", approveToken)
             }
           }}
           disabled={isApproving || numericPrice === "0"} // Also disable if price is invalid

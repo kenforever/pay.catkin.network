@@ -248,16 +248,87 @@ export const useFusionPlusTransfer = ({
         hashLock,
         secretHashes,
         // 可選的費用配置
-        fee: {
-          takingFeeBps: 100, // 1%，以 bps 格式，1% 等於 100bps
-          takingFeeReceiver: "0x0000000000000000000000000000000000000000" // 費用接收者地址
-        }
+        // fee: {
+        //   takingFeeBps: 100, // 1%，以 bps 格式，1% 等於 100bps
+        //   takingFeeReceiver: "0x0000000000000000000000000000000000000000" // 費用接收者地址
+        // }
       };
       console.log("Placing order with params:", orderParams);
 
       // 下單
       const result = await sdk.placeOrder(quote, orderParams);
       console.log("Order placed, result:", result);
+
+      // 獲取 orderHash
+      const orderHash = result.orderHash;
+      console.log(`訂單成功下單，orderHash: ${orderHash}`);
+
+      // 設置輪詢間隔檢查訂單狀態和填充
+      const intervalId = setInterval(() => {
+        console.log(`輪詢填充直到訂單狀態設置為"executed"...`);
+        
+        // 檢查訂單狀態
+        sdk.getOrderStatus(orderHash)
+          .then(order => {
+            if (order.status === 'executed') {
+              console.log(`訂單已完成。退出輪詢。`);
+              clearInterval(intervalId);
+              
+              // 設置最終成功狀態
+              setIsSuccess(true);
+              // 獲取最終交易哈希 (如果需要)
+              if (!txHash) {
+                // 尝试从 order 对象中获取交易哈希
+                // SDK 可能不会在 order 对象中直接提供 txHash，
+                // 所以我们在这里安全地检查可能的属性
+                const possibleTxHash = 
+                  (order as any).txHash || 
+                  (order as any).tx?.hash || 
+                  (order as any).transaction?.hash;
+                
+                if (possibleTxHash && typeof possibleTxHash === 'string') {
+                  setTxHash(possibleTxHash);
+                }
+              }
+            }
+          })
+          .catch(error => {
+            console.error(`獲取訂單狀態時出錯: ${JSON.stringify(error, null, 2)}`);
+          });
+
+        // 檢查是否有準備好接受密碼的填充
+        sdk.getReadyToAcceptSecretFills(orderHash)
+          .then((fillsObject) => {
+            if (fillsObject.fills && fillsObject.fills.length > 0) {
+              fillsObject.fills.forEach(fill => {
+                // 提交對應的密碼
+                sdk.submitSecret(orderHash, secrets[fill.idx])
+                  .then(() => {
+                    console.log(`找到填充訂單！已提交密碼: ${JSON.stringify(secretHashes[fill.idx], null, 2)}`);
+                  })
+                  .catch((error) => {
+                    console.error(`提交密碼時出錯: ${JSON.stringify(error, null, 2)}`);
+                  });
+              });
+            }
+          })
+          .catch((error) => {
+            if (error.response) {
+              // 請求已發送但服務器返回了非 2xx 狀態碼
+              console.error('獲取準備接受密碼填充時出錯:', {
+                status: error.response.status,
+                statusText: error.response.statusText,
+                data: error.response.data
+              });
+            } else if (error.request) {
+              // 請求已發送但沒有收到響應
+              console.error('未收到響應:', error.request);
+            } else {
+              // 設置請求過程中出現錯誤
+              console.error('錯誤', error.message);
+            }
+          });
+      }, 5000);
 
       // 檢查 result 結構並嘗試獲取哈希
       // 注意：placeOrder 的確切返回類型可能需要根據 SDK 文檔或實際響應調整
@@ -268,21 +339,20 @@ export const useFusionPlusTransfer = ({
         } else if ('tx' in result && typeof result.tx === 'object' && result.tx && 'hash' in result.tx && typeof result.tx.hash === 'string') {
           finalTxHash = result.tx.hash;
         } else {
-          console.warn("Could not find transaction hash in placeOrder result:", result);
-          // 如果沒有直接的哈希，可能需要監聽事件或進行其他操作
+          console.warn("無法在 placeOrder 結果中找到交易哈希:", result);
+          // 如果沒有直接的哈希，可通過訂單狀態監控獲取
         }
       }
       
-      // 設置成功狀態
+      // 設置成功狀態和交易哈希（如果有）
       if(finalTxHash) {
           setTxHash(finalTxHash);
           setIsSuccess(true);
           return { txHash: finalTxHash };
       } else {
-          // 訂單可能已提交但沒有立即返回哈希
-          setIsSuccess(true); // 標記為成功，但沒有哈希
-          console.log("Order placed successfully, but no immediate tx hash found.");
-          return; // 或返回一個表示狀態的對象
+          // 訂單已提交，但現在不設置完全成功，等待輪詢完成
+          console.log("訂單已成功下單，等待填充和執行");
+          return; // 返回一個表示狀態的對象
       }
 
     } catch (err) {

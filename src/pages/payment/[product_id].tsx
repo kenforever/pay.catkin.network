@@ -1,12 +1,13 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useCallback } from "react"
 import { useRouter } from "next/router"
 import { ConnectButton } from "@rainbow-me/rainbowkit"
 import { useAccount, useContractRead, useWriteContract, useSwitchChain } from "wagmi"
 import { NetworkEnum } from "@1inch/cross-chain-sdk"
 import { motion, AnimatePresence } from "framer-motion"
 import useFusionPlusTransfer from "../../hooks/use-fusion-plus-transfer"
+import { useCCTPTransfer } from "../../hooks/use-CCTP-transfer"
 import Head from "next/head"
 import Image from "next/image"
 import { parseUnits, formatUnits, erc20Abi } from "viem"
@@ -14,6 +15,7 @@ import tokenData from "./support_token_list.json" // Import token data from JSON
 
 // Constants
 const INCH_AGGREGATOR_ADDRESS = "0x111111125421cA6dc452d289314280a0f8842A65" // Replace with actual 1inch aggregator address
+const CCTP_CONTRACT_ADDRESS = "0x28b5a0e9C621a5BadaA536219b3a228C8168cf5d" // CCTP contract address
 
 // Types
 interface Product {
@@ -60,7 +62,20 @@ const availableChains: Chain[] = [
   { id: 10, name: "Optimism", networkEnum: NetworkEnum.OPTIMISM },
   { id: 42161, name: "Arbitrum", networkEnum: NetworkEnum.ARBITRUM },
   { id: 8453, name: "Base", networkEnum: NetworkEnum.COINBASE },
+  { id: 43114, name: "Avalanche", networkEnum: NetworkEnum.AVALANCHE },
+  { id: 59144, name: "Linea", networkEnum: NetworkEnum.LINEA },
 ]
+
+// CCTP 支持的鏈 ID 列表
+const CCTP_SUPPORTED_CHAINS = [1, 43114, 8453, 59144]; // Ethereum, Avalanche, Base, Linea
+
+// USDC 地址映射 (各鏈上的 USDC 合約地址)
+const USDC_ADDRESSES: {[chainId: number]: `0x${string}`} = {
+  1: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48", // Ethereum
+  43114: "0xB97EF9Ef8734C71904D8002F8b6Bc66Dd9c48a6E", // Avalanche
+  8453: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913", // Base
+  59144: "0x176211869cA2b568f2A7D4EE941E073a821EE1ff", // Linea
+};
 
 // Payment steps
 enum PaymentStep {
@@ -115,6 +130,7 @@ const PaymentPage = () => {
   const [error, setError] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(false)
   const [chainTokens, setChainTokens] = useState<Token[]>([]) // State for tokens of the selected chain
+  const [useCCTP, setUseCCTP] = useState(false) // 是否使用 CCTP 轉賬
 
   // Wagmi hooks
   const { address, isConnected, chain } = useAccount()
@@ -149,6 +165,8 @@ const PaymentPage = () => {
     "Optimism": NetworkEnum.OPTIMISM,
     "Arbitrum": NetworkEnum.ARBITRUM,
     "Base": NetworkEnum.COINBASE,
+    "Avalanche": NetworkEnum.AVALANCHE,
+    "Linea": NetworkEnum.LINEA,
     // Add other mappings if needed
   };
 
@@ -159,10 +177,11 @@ const PaymentPage = () => {
     address: selectedToken?.address,
     abi: erc20Abi,
     functionName: "allowance",
-    args: [address as `0x${string}`, INCH_AGGREGATOR_ADDRESS as `0x${string}`],
+    args: [address as `0x${string}`, useCCTP ? CCTP_CONTRACT_ADDRESS as `0x${string}` : INCH_AGGREGATOR_ADDRESS as `0x${string}`],
   })
 
   console.log("allowance", allowance)
+
   // Approve token spending
   const {
     writeContract: approveToken,
@@ -170,14 +189,37 @@ const PaymentPage = () => {
     isSuccess: isApproveSuccess,
   } = useWriteContract()
 
-  // Transfer hook
+  // 檢查是否可以使用 CCTP
+  const checkCCTPEligibility = useCallback(() => {
+    if (!selectedChain || !selectedToken || !product?.network) return false;
+    
+    // 獲取目標鏈 ID
+    const dstChainId = availableChains.find(c => c.name === product.network)?.id;
+    if (!dstChainId) return false;
+    
+    // 檢查源鏈和目標鏈是否都支持 CCTP
+    const isSrcChainSupported = CCTP_SUPPORTED_CHAINS.includes(selectedChain.id);
+    const isDstChainSupported = CCTP_SUPPORTED_CHAINS.includes(dstChainId);
+    
+    // 檢查是否為 USDC 代幣
+    const isUSDC = selectedToken.symbol === "USDC";
+    
+    return isSrcChainSupported && isDstChainSupported && isUSDC;
+  }, [selectedChain, selectedToken, product]);
+  
+  // 在選擇代幣或鏈變更時更新 CCTP 狀態
+  useEffect(() => {
+    setUseCCTP(checkCCTPEligibility());
+  }, [selectedChain, selectedToken, product, checkCCTPEligibility]);
+  
+  // Transfer hook for FusionPlus
   const {
-    transfer,
-    isLoading: isTransferLoading,
-    isSuccess: isTransferSuccess,
-    isError: isTransferError,
-    error: transferError,
-    txHash: transferTxHash,
+    transfer: fusionTransfer,
+    isLoading: isFusionLoading,
+    isSuccess: isFusionSuccess,
+    isError: isFusionError,
+    error: fusionError,
+    txHash: fusionTxHash,
   } = useFusionPlusTransfer({
     // Use the processed numericPrice for amount calculation
     amount: parseUnits(numericPrice, selectedToken?.decimals || 18).toString(),
@@ -188,6 +230,52 @@ const PaymentPage = () => {
     srcTokenAddress: selectedToken?.address || "0x6b175474e89094c44da98b954eedeac495271d0f", // Consider if this needs adjustment based on selectedChain
     dstTokenAddress: product?.token_address || "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee", // Use token_address from product, fallback to native token
   })
+
+  // 獲取目標鏈 ID
+  const getDstChainId = useCallback(() => {
+    if (!product?.network) return 1; // 默認為 Ethereum
+    const chain = availableChains.find(c => c.name === product.network);
+    return chain?.id || 1;
+  }, [product]);
+
+  // Transfer hook for CCTP
+  const {
+    executeTransfer: cctpTransfer,
+    isLoading: isCCTPLoading,
+    isSuccess: isCCTPSuccess,
+    isError: isCCTPError,
+    error: cctpError,
+  } = useCCTPTransfer({
+    amount: numericPrice,
+    sourceChainId: selectedChain?.id || 1,
+    destinationChainId: getDstChainId(),
+    destinationAddress: product?.owner as `0x${string}` || address as `0x${string}`,
+    transferType: "fast",
+  });
+
+  // 統一轉賬狀態
+  const isTransferLoading = useCCTP ? isCCTPLoading : isFusionLoading;
+  const isTransferSuccess = useCCTP ? isCCTPSuccess : isFusionSuccess;
+  const isTransferError = useCCTP ? isCCTPError : isFusionError;
+  const transferError = useCCTP ? cctpError : fusionError;
+  const transferTxHash = useCCTP ? "cctp-transfer-hash" : fusionTxHash;
+
+  // 統一轉賬函數
+  const transfer = async () => {
+    if (useCCTP) {
+      try {
+        await cctpTransfer();
+        // CCTP 轉賬成功時設置一個臨時 txHash，因為 useCCTPTransfer 不返回 txHash
+        setTxHash("cctp-transfer-success");
+        return true;
+      } catch (err) {
+        console.error("CCTP transfer failed:", err);
+        return false;
+      }
+    } else {
+      return fusionTransfer();
+    }
+  };
 
   // Effect to handle allowance approval success
   useEffect(() => {
@@ -329,20 +417,16 @@ const PaymentPage = () => {
   // Handle transfer execution
   const handleExecuteTransfer = async () => {
     if (!product?.price || !selectedToken) {
-      setError("Product price or token details missing.")
-      setCurrentStep(PaymentStep.TRANSACTION_RESULT)
-      return
+      setError("Product price or token details missing.");
+      setCurrentStep(PaymentStep.TRANSACTION_RESULT);
+      return;
     }
     try {
-      if (transfer) {
-        await transfer()
-      } else {
-        throw new Error("Transfer function is not available.")
-      }
+      await transfer();
     } catch (err) {
-      console.error("Transfer failed:", err)
-      setError(err instanceof Error ? err.message : "Unknown error occurred during transfer")
-      setCurrentStep(PaymentStep.TRANSACTION_RESULT)
+      console.error("Transfer failed:", err);
+      setError(err instanceof Error ? err.message : "Unknown error occurred during transfer");
+      setCurrentStep(PaymentStep.TRANSACTION_RESULT);
     }
   }
 
@@ -365,6 +449,9 @@ const PaymentPage = () => {
     ease: "anticipate",
     duration: 0.5,
   }
+
+  // 判斷鏈是否支持 CCTP
+  const isChainCCTPSupported = (chainId: number) => CCTP_SUPPORTED_CHAINS.includes(chainId);
 
   // Render product info step
   const renderProductInfo = () => (
@@ -398,7 +485,7 @@ const PaymentPage = () => {
           )}
           <h3 className="text-xl font-semibold">{product.title}</h3>
           <p className="text-gray-600">{product.description}</p>
-          <div className="text-2xl font-bold text-blue-600">{product.price}</div>
+          <div className="text-2xl font-bold text-blue-600">{product.price} USDC</div>
 
           {/* Keep Proceed button, disable if not connected, remove old ConnectButton logic */}
           <button
@@ -436,13 +523,18 @@ const PaymentPage = () => {
                 <button
                   key={chainOption.id}
                   onClick={() => handleChainSelect(chainOption)}
-                  className={`p-3 border rounded-md text-center transition-colors ${
+                  className={`p-3 border rounded-md text-center transition-colors relative ${
                     selectedChain?.id === chainOption.id
                       ? "border-blue-500 bg-blue-50 text-blue-700"
                       : "border-gray-300 hover:border-blue-300"
                   }`}
                 >
                   {chainOption.name}
+                  {isChainCCTPSupported(chainOption.id) && (
+                    <span className="absolute top-0 right-0 -mt-2 -mr-2 bg-green-500 text-white text-xs px-2 py-1 rounded-full">
+                      快速
+                    </span>
+                  )}
                 </button>
               ))}
             </div>
@@ -458,17 +550,21 @@ const PaymentPage = () => {
                     <button
                       key={token.address}
                       onClick={() => handleTokenSelect(token)}
-                      className={`w-full flex items-center p-3 border rounded-md transition-colors ${
+                      className={`w-full flex items-center p-3 border rounded-md transition-colors relative ${
                         selectedToken?.address === token.address
                           ? "border-blue-500 bg-blue-50 text-blue-700"
                           : "border-gray-300 hover:border-blue-300"
                       }`}
                     >
-                
                       <div className="flex-1 text-left mx-12">
                         <div className="font-medium">{token.symbol}</div>
                         {/* <div className="text-xs text-gray-500">{token.name}</div> */}
                       </div>
+                      {token.symbol === "USDC" && isChainCCTPSupported(selectedChain.id) && (
+                        <span className="absolute top-0 right-0 -mt-2 -mr-2 bg-green-500 text-white text-xs px-2 py-1 rounded-full">
+                          快速
+                        </span>
+                      )}
                     </button>
                   ))
                 ) : (
@@ -502,6 +598,40 @@ const PaymentPage = () => {
                        <div className="font-medium">ETH</div>
                        <div className="text-xs text-gray-500">Ethereum</div>
                      </div>
+                   </button>
+                 )}
+                 
+                 {/* 手動添加 USDC 代幣，如果目前選定的鏈支持 CCTP 但 chainTokens 中沒有 USDC */}
+                 {isChainCCTPSupported(selectedChain.id) && !chainTokens.some(token => token.symbol === "USDC") && (
+                   <button
+                     onClick={() => handleTokenSelect({
+                       symbol: "USDC",
+                       name: "USD Coin",
+                       address: USDC_ADDRESSES[selectedChain.id] || "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+                       decimals: 6,
+                       logoURI: "/usdc-logo.png",
+                     })}
+                     className={`w-full flex items-center p-3 border rounded-md transition-colors relative ${
+                       selectedToken?.symbol === "USDC"
+                         ? "border-blue-500 bg-blue-50 text-blue-700"
+                         : "border-gray-300 hover:border-blue-300"
+                     }`}
+                   >
+                     <div className="w-8 h-8 relative mr-2">
+                       <Image
+                         src={"/usdc-logo.png"}
+                         alt={"USDC"}
+                         layout="fill"
+                         className="rounded-full"
+                       />
+                     </div>
+                     <div className="flex-1 text-left">
+                       <div className="font-medium">USDC</div>
+                       <div className="text-xs text-gray-500">USD Coin</div>
+                     </div>
+                     <span className="absolute top-0 right-0 -mt-2 -mr-2 bg-green-500 text-white text-xs px-2 py-1 rounded-full">
+                       快速
+                     </span>
                    </button>
                  )}
               </div>
@@ -583,7 +713,7 @@ const PaymentPage = () => {
                 address: selectedToken.address,
                 abi: erc20Abi,
                 functionName: "approve",
-                args: [INCH_AGGREGATOR_ADDRESS as `0x${string}`, parseUnits(numericPrice, selectedToken.decimals)],
+                args: [useCCTP ? CCTP_CONTRACT_ADDRESS as `0x${string}` : INCH_AGGREGATOR_ADDRESS as `0x${string}`, parseUnits(numericPrice, selectedToken.decimals)],
               })
               console.log("approveToken", approveToken)
             }
@@ -634,6 +764,16 @@ const PaymentPage = () => {
               {product?.price ? formatUnits(parseUnits(numericPrice, selectedToken?.decimals || 18), selectedToken?.decimals || 18) : 'N/A'} {selectedToken?.symbol} on {selectedChain?.name}
             </span>
           </div>
+          {useCCTP && (
+            <div className="mt-2 p-2 bg-green-50 border border-green-200 rounded-md">
+              <div className="flex items-center text-green-700">
+                <svg className="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path>
+                </svg>
+                <span className="text-sm font-medium">使用 CCTP 快速跨鏈轉賬</span>
+              </div>
+            </div>
+          )}
         </div>
 
         {isTransferLoading ? (

@@ -1,0 +1,130 @@
+{
+    "Ethereum": {
+      "usdc": {
+        "address": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+        "decimals": 6,
+        "poolid": 1
+      },
+      "usdt": {
+        "address": "0xdAC17F958D2ee523a2206206994597C13D831ec7",
+        "decimals": 6,
+        "poolid": 2
+      },
+      "usdd": {
+        "address": "0x0C10bF8FcB7Bf5412187A595ab97a3609160b5c6",
+        "decimals": 18,
+        "poolid": 0
+      },
+      "dai": {
+        "address": "0x6B175474E89094C44Da98b954EedeAC495271d0F",
+        "decimals": 18,
+        "poolid": 3
+      },
+      "susd": {
+        "address": "0x57Ab1ec28D129707052df4dF418D58a2D46d5f51",
+        "decimals": 18,
+        "poolid": 14
+      },
+      "lusd": {
+        "address": "0x5f98805A4E8be255a32880FDeC7F6728C6568bA0",
+        "decimals": 18,
+        "poolid": 15
+      }
+    },
+    "Avalanche": {
+      "usdc": {
+        "address": "0xB97EF9Ef8734C71904D8002F8b6Bc66Dd9c48a6E",
+        "decimals": 6,
+        "poolid": 1
+      },
+      "usdt": {
+        "address": "0x9702230A8Ea53601f5cD2dc00fDBc13d4dF4A8c7",
+        "decimals": 6,
+        "poolid": 2
+      },
+      "frax": {
+        "address": "0xD24C2Ad096400B6FBcd2ad8B24E7acBc21A1da64",
+        "decimals": 18,
+        "poolid": 7
+      }
+    },
+    "BSC": {
+      "busd": {
+        "address": "0xe9e7CEA3DedcA5984780Bafc599bD69ADd087D56",
+        "decimals": 18,
+        "poolid": 5
+      },
+      "usdt": {
+        "address": "0x55d398326f99059fF775485246999027B3197955",
+        "decimals": 18,
+        "poolid": 2
+      },
+      "usdd": {
+        "address": "0xd17479997F34dd9156Deef8F95A52D81D265be9c",
+        "decimals": 18,
+        "poolid": 11
+      }
+    },
+    "Polygon": {
+      "usdc": {
+        "address": "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174",
+        "decimals": 6,
+        "poolid": 1
+      },
+      "usdt": {
+        "address": "0xc2132D05D31c914a87C6611C10748AEb04B58e8F",
+        "decimals": 6,
+        "poolid": 2
+      },
+      "dai": {
+        "address": "0x8f3Cf7ad23Cd3CaDbD9735AFf958023239c6A063",
+        "decimals": 18,
+        "poolid": 3
+      }
+    },
+    "Arbitrum": {
+      "usdc": {
+        "address": "0xFF970A61A04b1cA14834A43f5dE4533eBDDB5CC8",
+        "decimals": 6,
+        "poolid": 1
+      },
+      "usdt": {
+        "address": "0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9",
+        "decimals": 6,
+        "poolid": 2
+      },
+      "frax": {
+        "address": "0x17FC002b466eEc40DaE837Fc4bE5c67993ddBd6F",
+        "decimals": 18,
+        "poolid": 7
+      }
+    },
+    "Optimism": {
+      "usdc": {
+        "address": "0x7F5c764cBc14f9669B88837ca1490cCa17c31607",
+        "decimals": 6,
+        "poolid": 1
+      },
+      "dai": {
+        "address": "0xDA10009cBd5D07dd0CeCc66161FC93D7c9000da1",
+        "decimals": 18,
+        "poolid": 3
+      },
+      "frax": {
+        "address": "0x2E3D870790dC77A83DD1d18184Acc7439A53f475",
+        "decimals": 18,
+        "poolid": 7
+      },
+      "susd": {
+        "address": "0x8c6f28f2F1A3C87F0f938b96d27520d9751ec8d9",
+        "decimals": 18,
+        "poolid": 14
+      },
+      "lusd": {
+        "address": "0xc40F949F8a4e094D1b49a23ea9241D289B7b2819",
+        "decimals": 18,
+        "poolid": 15
+      }
+    }
+  }
+  

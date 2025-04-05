@@ -1,6 +1,7 @@
 import { ConnectButton } from '@rainbow-me/rainbowkit';
 import type { NextPage } from 'next';
 import Head from 'next/head';
+import Link from 'next/link';
 import styles from '../styles/Home.module.css';
 
 const Home: NextPage = () => {
@@ -30,6 +31,11 @@ const Home: NextPage = () => {
         </p>
 
         <div className={styles.grid}>
+          <Link href="/test-cross-chain" className={styles.card}>
+            <h2>跨鏈轉賬測試 &rarr;</h2>
+            <p>前往測試頁面，嘗試使用 1inch 跨鏈轉賬功能。</p>
+          </Link>
+
           <a className={styles.card} href="https://rainbowkit.com">
             <h2>RainbowKit Documentation &rarr;</h2>
             <p>Learn how to customize your wallet connection flow.</p>

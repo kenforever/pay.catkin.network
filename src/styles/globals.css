@@ -1,3 +1,9 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* 其他全局樣式可以在這裡添加 */
+
 html,
 body {
   padding: 0;

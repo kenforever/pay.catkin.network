@@ -9,7 +9,7 @@ const inter = Inter({ subsets: ["latin"] })
 export const metadata = {
   title: "Payment Gateway",
   description: "EVM On-Chain Payment Gateway",
-    generator: 'v0.dev'
+  generator: "v0.dev",
 }
 
 export default function RootLayout({
@@ -28,6 +28,5 @@ export default function RootLayout({
   )
 }
 
+import "./globals.css"
 
-
-import './globals.css'

@@ -1,10 +1,11 @@
 "use client"
 
-import { useEffect, useRef } from "react"
+import { useEffect, useRef, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import type { ProductData, PaymentDetails } from "../payment-flow"
 import { CheckCircle, XCircle, ExternalLink } from "lucide-react"
+import Image from "next/image"
 import anime from "animejs"
 
 interface TransactionResultProps {
@@ -12,6 +13,7 @@ interface TransactionResultProps {
   success: boolean | null
   productData: ProductData | null
   paymentDetails: PaymentDetails
+  paymentMethod: "cctp" | "1inch"
   onRetry: () => void
 }
 
@@ -20,9 +22,32 @@ export default function TransactionResult({
   success = true, // Default to success for demo
   productData,
   paymentDetails,
+  paymentMethod,
   onRetry,
 }: TransactionResultProps) {
   const fireworksRef = useRef<HTMLDivElement>(null)
+  const [selectedTokenInfo, setSelectedTokenInfo] = useState<any>(null)
+
+  useEffect(() => {
+    // Fetch token info for display
+    const fetchTokenInfo = async () => {
+      try {
+        const response = await fetch("https://tokens.coingecko.com/uniswap/all.json")
+        if (!response.ok) {
+          throw new Error("Failed to fetch token list")
+        }
+        const data = await response.json()
+        const tokenInfo = data.tokens.find((token: any) => token.address === paymentDetails.selectedToken)
+        setSelectedTokenInfo(tokenInfo)
+      } catch (error) {
+        console.error("Error fetching token info:", error)
+      }
+    }
+
+    if (paymentDetails.selectedToken) {
+      fetchTokenInfo()
+    }
+  }, [paymentDetails.selectedToken])
 
   useEffect(() => {
     if (success && fireworksRef.current) {
@@ -127,11 +152,23 @@ export default function TransactionResult({
             <Card className="w-full max-w-md p-4 bg-muted/50">
               <h4 className="font-medium mb-4">Payment Receipt</h4>
               <div className="space-y-2 text-sm">
-                <div className="flex justify-between">
+                <div className="flex justify-between items-center">
                   <span>Amount:</span>
-                  <span className="font-medium">
-                    {paymentDetails.amount} {paymentDetails.selectedToken}
-                  </span>
+                  <div className="flex items-center gap-2">
+                    <span className="font-medium">{paymentDetails.amount}</span>
+                    {selectedTokenInfo?.logoURI && (
+                      <div className="relative w-5 h-5 rounded-full overflow-hidden">
+                        <Image
+                          src={selectedTokenInfo.logoURI || "/placeholder.svg"}
+                          alt={selectedTokenInfo.name}
+                          width={20}
+                          height={20}
+                          className="object-contain"
+                        />
+                      </div>
+                    )}
+                    <span className="font-medium">{selectedTokenInfo?.symbol || "token"}</span>
+                  </div>
                 </div>
                 <div className="flex justify-between">
                   <span>Network:</span>
@@ -140,11 +177,7 @@ export default function TransactionResult({
                 <div className="flex justify-between">
                   <span>Payment Method:</span>
                   <span className="font-medium">
-                    {paymentDetails.selectedToken === "USDC" &&
-                    paymentDetails.receiverToken === "USDC" &&
-                    ["avax", "base", "ethereum", "linea"].includes(paymentDetails.selectedChain)
-                      ? "CCTP Fast Transfer"
-                      : "1inch Fusion+ Transfer"}
+                    {paymentMethod === "cctp" ? "CCTP Fast Transfer" : "1inch Fusion+ Transfer"}
                   </span>
                 </div>
                 <div className="flex justify-between">

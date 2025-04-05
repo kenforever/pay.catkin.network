@@ -10,6 +10,7 @@ import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { ConnectButton } from "@rainbow-me/rainbowkit"
 import { useAccount } from "wagmi"
+import Image from "next/image"
 import type { ProductData, PaymentDetails } from "../payment-flow"
 
 interface PaymentOptionsProps {
@@ -20,21 +21,22 @@ interface PaymentOptionsProps {
   onPrev: () => void
 }
 
-const chains = [
-  { id: "ethereum", name: "Ethereum" },
-  { id: "avax", name: "Avalanche" },
-  { id: "base", name: "Base" },
-  { id: "linea", name: "Linea" },
-  { id: "polygon", name: "Polygon" },
-  { id: "arbitrum", name: "Arbitrum" },
-]
+interface Token {
+  chainId: number
+  address: string
+  name: string
+  symbol: string
+  decimals: number
+  logoURI?: string
+}
 
-const tokens = [
-  { id: "USDC", name: "USDC", chains: ["ethereum", "avax", "base", "linea", "polygon", "arbitrum"] },
-  { id: "USDT", name: "USDT", chains: ["ethereum", "avax", "polygon", "arbitrum"] },
-  { id: "ETH", name: "ETH", chains: ["ethereum", "base", "linea", "arbitrum"] },
-  { id: "AVAX", name: "AVAX", chains: ["avax"] },
-  { id: "MATIC", name: "MATIC", chains: ["polygon"] },
+const chains = [
+  { id: "ethereum", name: "Ethereum", chainId: 1 },
+  { id: "avax", name: "Avalanche", chainId: 43114 },
+  { id: "base", name: "Base", chainId: 8453 },
+  { id: "linea", name: "Linea", chainId: 59144 },
+  { id: "polygon", name: "Polygon", chainId: 137 },
+  { id: "arbitrum", name: "Arbitrum", chainId: 42161 },
 ]
 
 export default function PaymentOptions({
@@ -47,22 +49,52 @@ export default function PaymentOptions({
   const [amount, setAmount] = useState<number>(productData.price || 0)
   const [selectedChain, setSelectedChain] = useState<string>("")
   const [selectedToken, setSelectedToken] = useState<string>("")
-  const [availableTokens, setAvailableTokens] = useState<typeof tokens>([])
+  const [availableTokens, setAvailableTokens] = useState<Token[]>([])
+  const [allTokens, setAllTokens] = useState<Token[]>([])
+  const [isLoadingTokens, setIsLoadingTokens] = useState(false)
   const { isConnected } = useAccount()
 
+  // Fetch token list from CoinGecko
   useEffect(() => {
-    if (selectedChain) {
-      const filteredTokens = tokens.filter((token) => token.chains.includes(selectedChain))
-      setAvailableTokens(filteredTokens)
-
-      // Reset token selection if current selection is not available
-      if (selectedToken && !filteredTokens.some((t) => t.id === selectedToken)) {
-        setSelectedToken("")
+    const fetchTokens = async () => {
+      try {
+        setIsLoadingTokens(true)
+        const response = await fetch("https://tokens.coingecko.com/uniswap/all.json")
+        if (!response.ok) {
+          throw new Error("Failed to fetch token list")
+        }
+        const data = await response.json()
+        setAllTokens(data.tokens)
+      } catch (error) {
+        console.error("Error fetching token list:", error)
+      } finally {
+        setIsLoadingTokens(false)
       }
+    }
+
+    fetchTokens()
+  }, [])
+
+  // Filter tokens based on selected chain
+  useEffect(() => {
+    if (selectedChain && allTokens.length > 0) {
+      const selectedChainObj = chains.find((chain) => chain.id === selectedChain)
+      if (selectedChainObj) {
+        // Filter tokens for the selected chain
+        // For demo purposes, we'll use Ethereum tokens for all chains since the API mainly has Ethereum tokens
+        // In a real implementation, you would filter by the actual chainId
+        const chainTokens = allTokens.slice(0, 50) // Limit to 50 tokens for performance
+        setAvailableTokens(chainTokens)
+      } else {
+        setAvailableTokens([])
+      }
+
+      // Reset token selection
+      setSelectedToken("")
     } else {
       setAvailableTokens([])
     }
-  }, [selectedChain, selectedToken])
+  }, [selectedChain, allTokens])
 
   const handleAmountChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const value = Number.parseFloat(e.target.value)
@@ -78,10 +110,13 @@ export default function PaymentOptions({
   }
 
   const handleNext = () => {
+    // Find the selected token object to get its address
+    const tokenObj = availableTokens.find((token) => token.address === selectedToken)
+
     onPaymentDetailsChange({
       amount,
       selectedChain,
-      selectedToken,
+      selectedToken: selectedToken,
       receiverToken: productData.token || "USDC",
     })
     onNext()
@@ -139,14 +174,31 @@ export default function PaymentOptions({
 
                 <div>
                   <Label htmlFor="token">Select Token</Label>
-                  <Select value={selectedToken} onValueChange={handleTokenChange} disabled={!selectedChain}>
+                  <Select
+                    value={selectedToken}
+                    onValueChange={handleTokenChange}
+                    disabled={!selectedChain || isLoadingTokens}
+                  >
                     <SelectTrigger id="token" className="mt-1">
-                      <SelectValue placeholder="Select token" />
+                      <SelectValue placeholder={isLoadingTokens ? "Loading tokens..." : "Select token"} />
                     </SelectTrigger>
-                    <SelectContent>
+                    <SelectContent className="max-h-[300px]">
                       {availableTokens.map((token) => (
-                        <SelectItem key={token.id} value={token.id}>
-                          {token.name}
+                        <SelectItem key={token.address} value={token.address}>
+                          <div className="flex items-center gap-2">
+                            {token.logoURI && (
+                              <div className="relative w-5 h-5 rounded-full overflow-hidden">
+                                <Image
+                                  src={token.logoURI || "/placeholder.svg"}
+                                  alt={token.name}
+                                  width={20}
+                                  height={20}
+                                  className="object-contain"
+                                />
+                              </div>
+                            )}
+                            <span>{token.symbol}</span>
+                          </div>
                         </SelectItem>
                       ))}
                     </SelectContent>

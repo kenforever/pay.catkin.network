@@ -1,241 +1,174 @@
 "use client"
 
-import type React from "react"
-
 import { useState, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
-import { Input } from "@/components/ui/input"
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 import { Label } from "@/components/ui/label"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { ConnectButton } from "@rainbow-me/rainbowkit"
-import { useAccount } from "wagmi"
-import type { ProductData, PaymentDetails } from "../payment-flow"
-import Image from "next/image"
+import { useToast } from "@/hooks/use-toast"
+import { useAccount, useNetwork, useSwitchNetwork } from "wagmi"
+import { useCrossChainTransfer } from "@/lib/use-cross-chain-transfer"
+import { useFusionTransfer } from "@/lib/use-fusion-transfer"
+import { CHAIN_NAME_TO_ID } from "@/lib/chains"
+import type { PaymentDetails } from "../payment-flow"
 
-interface PaymentOptionsProps {
-  productData: ProductData
+interface ProcessTransactionProps {
   paymentDetails: PaymentDetails
-  onPaymentDetailsChange: (details: Partial<PaymentDetails>) => void
   onNext: () => void
   onPrev: () => void
+  setNeedsApproval: (needs: boolean) => void
+  setPaymentMethod: (method: "cctp" | "1inch") => void
 }
 
-interface Token {
-  chainId: number
-  address: string
-  name: string
-  symbol: string
-  decimals: number
-  logoURI?: string
-}
-
-interface TokenList {
-  name: string
-  logoURI: string
-  tokens: Token[]
-}
-
-const chainIdMap: Record<string, number> = {
-  "ethereum": 1,
-  "avax": 43114,
-  "base": 8453,
-  "linea": 59144,
-  "polygon": 137,
-  "arbitrum": 42161,
-}
-
-const chains = [
-  { id: "ethereum", name: "Ethereum" },
-  { id: "avax", name: "Avalanche" },
-  { id: "base", name: "Base" },
-  { id: "linea", name: "Linea" },
-  { id: "polygon", name: "Polygon" },
-  { id: "arbitrum", name: "Arbitrum" },
-]
-
-export default function PaymentOptions({
-  productData,
+export default function ProcessTransaction({
   paymentDetails,
-  onPaymentDetailsChange,
   onNext,
   onPrev,
-}: PaymentOptionsProps) {
-  const [amount, setAmount] = useState<number>(productData.price || 0)
-  const [selectedChain, setSelectedChain] = useState<string>("")
-  const [selectedToken, setSelectedToken] = useState<string>("")
-  const [availableTokens, setAvailableTokens] = useState<Token[]>([])
-  const [allTokens, setAllTokens] = useState<Token[]>([])
-  const [selectedTokenData, setSelectedTokenData] = useState<Token | null>(null)
-  const { isConnected, chainId } = useAccount()
+  setNeedsApproval,
+  setPaymentMethod,
+}: ProcessTransactionProps) {
+  const [selectedMethod, setSelectedMethod] = useState<"cctp" | "1inch">("cctp")
+  const [isProcessing, setIsProcessing] = useState(false)
+  const [selectedTokenInfo, setSelectedTokenInfo] = useState<any>(null)
+  const { toast } = useToast()
+  const { address } = useAccount()
+  const { chain } = useNetwork()
+  const { switchNetwork } = useSwitchNetwork()
+  const { executeTransfer: executeCCTPTransfer, reset: resetCCTP } = useCrossChainTransfer()
+  const { executeFusionTransfer, reset: resetFusion } = useFusionTransfer()
 
-  const fetchTokens = async () => {
+  useEffect(() => {
+    // Fetch token info for display
+    const fetchTokenInfo = async () => {
+      try {
+        const response = await fetch("https://tokens.coingecko.com/uniswap/all.json")
+        if (!response.ok) {
+          throw new Error("Failed to fetch token list")
+        }
+        const data = await response.json()
+        const tokenInfo = data.tokens.find((token: any) => token.address === paymentDetails.selectedToken)
+        setSelectedTokenInfo(tokenInfo)
+      } catch (error) {
+        console.error("Error fetching token info:", error)
+      }
+    }
+
+    if (paymentDetails.selectedToken) {
+      fetchTokenInfo()
+    }
+  }, [paymentDetails.selectedToken])
+
+  // Reset transfer states when component mounts
+  useEffect(() => {
+    resetCCTP()
+    resetFusion()
+  }, [resetCCTP, resetFusion])
+
+  const handleMethodChange = (value: "cctp" | "1inch") => {
+    setSelectedMethod(value)
+  }
+
+  const handleContinue = async () => {
     try {
-      const response = await fetch("https://tokens.coingecko.com/uniswap/all.json")
-      const data: TokenList = await response.json()
-      setAllTokens(data.tokens)
+      setIsProcessing(true)
+      setPaymentMethod(selectedMethod)
+
+      // Check if we need to switch networks
+      const targetChainId = CHAIN_NAME_TO_ID[paymentDetails.selectedChain]
+      if (chain?.id !== targetChainId && switchNetwork) {
+        await switchNetwork(targetChainId)
+      }
+
+      // For demo purposes, we'll simulate the approval check
+      // In a real implementation, you would check the allowance
+      const needsApproval = true
+      setNeedsApproval(needsApproval)
+
+      // Move to the next step (allowance)
+      onNext()
     } catch (error) {
-      console.error("Error fetching tokens:", error)
+      console.error("Error processing transaction:", error)
+      toast({
+        title: "Error",
+        description: error instanceof Error ? error.message : "Failed to process transaction",
+        variant: "destructive",
+      })
+    } finally {
+      setIsProcessing(false)
     }
   }
-
-  useEffect(() => {
-    fetchTokens()
-  }, [])
-
-  useEffect(() => {
-    if (chainId) {
-      // Find the chain name from chainId
-      const chainEntry = Object.entries(chainIdMap).find(([_, id]) => id === chainId)
-      if (chainEntry) {
-        setSelectedChain(chainEntry[0])
-      }
-    }
-  }, [chainId])
-
-  useEffect(() => {
-    if (selectedChain && allTokens.length > 0) {
-      const chainId = chainIdMap[selectedChain]
-      const filteredTokens = allTokens.filter(token => token.chainId === chainId)
-      setAvailableTokens(filteredTokens)
-
-      // Reset token selection if current selection is not available
-      if (selectedToken && !filteredTokens.some((t) => t.address === selectedToken)) {
-        setSelectedToken("")
-        setSelectedTokenData(null)
-      }
-    } else {
-      setAvailableTokens([])
-    }
-  }, [selectedChain, allTokens, selectedToken])
-
-  useEffect(() => {
-    if (selectedToken && availableTokens.length > 0) {
-      const tokenData = availableTokens.find(t => t.address === selectedToken) || null
-      setSelectedTokenData(tokenData)
-    } else {
-      setSelectedTokenData(null)
-    }
-  }, [selectedToken, availableTokens])
-
-  const handleAmountChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const value = Number.parseFloat(e.target.value)
-    setAmount(isNaN(value) ? 0 : value)
-  }
-
-  const handleChainChange = (value: string) => {
-    setSelectedChain(value)
-  }
-
-  const handleTokenChange = (value: string) => {
-    setSelectedToken(value)
-  }
-
-  const handleNext = () => {
-    onPaymentDetailsChange({
-      amount,
-      selectedChain,
-      selectedToken,
-      selectedTokenAddress: selectedTokenData?.address,
-      selectedTokenSymbol: selectedTokenData?.symbol,
-      receiverToken: productData.token || "USDC",
-    })
-    onNext()
-  }
-
-  const isProduct = !!productData.id
-  const isFormValid = amount > 0 && selectedChain && selectedToken
 
   return (
     <div className="space-y-6">
-      <h2 className="text-xl font-bold">Payment Options</h2>
+      <h2 className="text-xl font-bold">Choose Payment Method</h2>
 
-      <Card className="p-6 space-y-6">
-        <div className="space-y-4">
+      <Card className="p-6">
+        <div className="space-y-6">
           <div>
-            <Label htmlFor="amount">Amount</Label>
-            {isProduct ? (
-              <div className="text-2xl font-bold mt-2">${productData.price?.toFixed(2)}</div>
-            ) : (
-              <Input
-                id="amount"
-                type="number"
-                value={amount || ""}
-                onChange={handleAmountChange}
-                placeholder="Enter amount"
-                min="0"
-                step="0.01"
-              />
-            )}
+            <h3 className="text-lg font-medium mb-4">Select how you want to process your payment</h3>
+            <RadioGroup value={selectedMethod} onValueChange={handleMethodChange as (value: string) => void}>
+              <div className="flex items-start space-x-2 mb-4">
+                <RadioGroupItem value="cctp" id="cctp" />
+                <div className="grid gap-1.5">
+                  <Label htmlFor="cctp" className="font-medium">
+                    Circle CCTP (Cross-Chain Transfer Protocol)
+                  </Label>
+                  <p className="text-sm text-muted-foreground">
+                    Fast and secure cross-chain transfers using Circle's USDC bridge. Best for USDC transfers between
+                    supported chains.
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-start space-x-2">
+                <RadioGroupItem value="1inch" id="1inch" />
+                <div className="grid gap-1.5">
+                  <Label htmlFor="1inch" className="font-medium">
+                    1inch Fusion+
+                  </Label>
+                  <p className="text-sm text-muted-foreground">
+                    Optimized swaps and transfers with MEV protection. Best for token swaps and transfers on the same
+                    chain.
+                  </p>
+                </div>
+              </div>
+            </RadioGroup>
           </div>
 
-          <div className="space-y-4 mt-6">
-            <div className="flex justify-between items-center">
-              <ConnectButton />
+          <div className="bg-muted/50 p-4 rounded-md">
+            <h4 className="font-medium mb-2">Payment Summary</h4>
+            <div className="space-y-2 text-sm">
+              <div className="flex justify-between">
+                <span>Amount:</span>
+                <span className="font-medium">
+                  {paymentDetails.amount} {selectedTokenInfo?.symbol || paymentDetails.selectedToken}
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span>Network:</span>
+                <span className="font-medium">{paymentDetails.selectedChain}</span>
+              </div>
+              <div className="flex justify-between">
+                <span>Payment Method:</span>
+                <span className="font-medium">{selectedMethod === "cctp" ? "Circle CCTP" : "1inch Fusion+"}</span>
+              </div>
+              <div className="flex justify-between">
+                <span>Estimated Fee:</span>
+                <span className="font-medium">
+                  {selectedMethod === "cctp" ? "0.1%" : "0.3%"} (~$
+                  {((selectedMethod === "cctp" ? 0.001 : 0.003) * paymentDetails.amount).toFixed(2)})
+                </span>
+              </div>
             </div>
-
-            {isConnected && (
-              <>
-                <div>
-                  <Label htmlFor="chain">Network</Label>
-                  <div className="mt-1 text-sm text-muted-foreground">
-                    Chain will be selected automatically based on your connected wallet.
-                  </div>
-                </div>
-
-                <div>
-                  <Label htmlFor="token">Select Token</Label>
-                  <Select value={selectedToken} onValueChange={handleTokenChange} disabled={!selectedChain}>
-                    <SelectTrigger id="token" className="mt-1">
-                      <SelectValue placeholder="Select token">
-                        {selectedTokenData && (
-                          <div className="flex items-center">
-                            {selectedTokenData.logoURI && (
-                              <Image 
-                                src={selectedTokenData.logoURI} 
-                                alt={selectedTokenData.symbol} 
-                                width={20} 
-                                height={20} 
-                                className="mr-2 rounded-full"
-                              />
-                            )}
-                            {selectedTokenData.symbol}
-                          </div>
-                        )}
-                      </SelectValue>
-                    </SelectTrigger>
-                    <SelectContent>
-                      {availableTokens.map((token) => (
-                        <SelectItem key={token.address} value={token.address}>
-                          <div className="flex items-center">
-                            {token.logoURI && (
-                              <Image 
-                                src={token.logoURI} 
-                                alt={token.symbol} 
-                                width={20} 
-                                height={20} 
-                                className="mr-2 rounded-full"
-                              />
-                            )}
-                            {token.symbol}
-                          </div>
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-              </>
-            )}
           </div>
         </div>
       </Card>
 
       <div className="flex justify-between">
-        <Button variant="outline" onClick={onPrev}>
+        <Button variant="outline" onClick={onPrev} disabled={isProcessing}>
           Back
         </Button>
-        <Button onClick={handleNext} disabled={!isConnected || !isFormValid}>
-          Continue
+        <Button onClick={handleContinue} disabled={isProcessing}>
+          {isProcessing ? "Processing..." : "Continue"}
         </Button>
       </div>
     </div>

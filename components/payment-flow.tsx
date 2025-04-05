@@ -24,10 +24,11 @@ export type ProductData = {
   token?: string
 }
 
+// Update the PaymentDetails type to include token address
 export type PaymentDetails = {
   amount: number
   selectedChain: string
-  selectedToken: string
+  selectedToken: string // This will now store the token address
   receiverToken: string
 }
 
@@ -46,6 +47,7 @@ export default function PaymentFlow() {
   const [txHash, setTxHash] = useState("")
   const [needsApproval, setNeedsApproval] = useState(false)
   const [txSuccess, setTxSuccess] = useState<boolean | null>(null)
+  const [paymentMethod, setPaymentMethod] = useState<"cctp" | "1inch">("1inch")
   const { isConnected } = useAccount()
 
   useEffect(() => {
@@ -61,7 +63,7 @@ export default function PaymentFlow() {
 
         let endpoint = ""
         if (productId) {
-          endpoint = `http://localhost:8000/product/product/1?id=${productId}`
+          endpoint = `http://localhost:8000/product/product/${productId}`
         } else if (username) {
           endpoint = `http://localhost/payment/username?username=${username}`
         }
@@ -105,6 +107,10 @@ export default function PaymentFlow() {
 
   const handleSetTxSuccess = (success: boolean) => {
     setTxSuccess(success)
+  }
+
+  const handleSetPaymentMethod = (method: "cctp" | "1inch") => {
+    setPaymentMethod(method)
   }
 
   const handleRetry = () => {
@@ -195,6 +201,7 @@ export default function PaymentFlow() {
                 onNext={handleNextStep}
                 onPrev={handlePrevStep}
                 setNeedsApproval={handleSetNeedsApproval}
+                setPaymentMethod={handleSetPaymentMethod}
               />
             )}
 
@@ -210,6 +217,7 @@ export default function PaymentFlow() {
             {currentStep === 5 && (
               <TransactionProcessing
                 paymentDetails={paymentDetails}
+                paymentMethod={paymentMethod}
                 onNext={handleNextStep}
                 setTxHash={handleSetTxHash}
               />
@@ -221,6 +229,7 @@ export default function PaymentFlow() {
                 success={txSuccess}
                 productData={productData}
                 paymentDetails={paymentDetails}
+                paymentMethod={paymentMethod}
                 onRetry={handleRetry}
               />
             )}

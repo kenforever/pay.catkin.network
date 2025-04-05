@@ -11,6 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { ConnectButton } from "@rainbow-me/rainbowkit"
 import { useAccount } from "wagmi"
 import type { ProductData, PaymentDetails } from "../payment-flow"
+import tokenList from "../jsons/support_token_list.json"
 
 interface PaymentOptionsProps {
   productData: ProductData
@@ -20,22 +21,44 @@ interface PaymentOptionsProps {
   onPrev: () => void
 }
 
-const chains = [
-  { id: "ethereum", name: "Ethereum" },
-  { id: "avax", name: "Avalanche" },
-  { id: "base", name: "Base" },
-  { id: "linea", name: "Linea" },
-  { id: "polygon", name: "Polygon" },
-  { id: "arbitrum", name: "Arbitrum" },
-]
+// 從JSON文件生成鏈的數組
+const chains = Object.keys(tokenList).map(name => ({
+  id: name.toLowerCase(),
+  name
+}));
 
-const tokens = [
-  { id: "USDC", name: "USDC", chains: ["ethereum", "avax", "base", "linea", "polygon", "arbitrum"] },
-  { id: "USDT", name: "USDT", chains: ["ethereum", "avax", "polygon", "arbitrum"] },
-  { id: "ETH", name: "ETH", chains: ["ethereum", "base", "linea", "arbitrum"] },
-  { id: "AVAX", name: "AVAX", chains: ["avax"] },
-  { id: "MATIC", name: "MATIC", chains: ["polygon"] },
-]
+// 生成代幣數組以及它們支持的鏈
+interface Token {
+  id: string;
+  name: string;
+  address: string;
+  chains: string[];
+}
+
+const tokens: Token[] = [];
+
+// 處理JSON並構建代幣數組
+Object.entries(tokenList).forEach(([chainName, chainTokens]) => {
+  const chainId = chainName.toLowerCase();
+  
+  Object.entries(chainTokens).forEach(([tokenId, tokenData]) => {
+    // 查找此代幣是否已在數組中
+    const existingToken = tokens.find(t => t.id === tokenId);
+    
+    if (existingToken) {
+      // 如果代幣已存在，將此鏈添加到其支持的鏈中
+      existingToken.chains.push(chainId);
+    } else {
+      // 否則創建新的代幣記錄
+      tokens.push({
+        id: tokenId,
+        name: tokenId.toUpperCase(),
+        address: tokenData.address,
+        chains: [chainId]
+      });
+    }
+  });
+});
 
 export default function PaymentOptions({
   productData,
@@ -47,7 +70,7 @@ export default function PaymentOptions({
   const [amount, setAmount] = useState<number>(productData.price || 0)
   const [selectedChain, setSelectedChain] = useState<string>("")
   const [selectedToken, setSelectedToken] = useState<string>("")
-  const [availableTokens, setAvailableTokens] = useState<typeof tokens>([])
+  const [availableTokens, setAvailableTokens] = useState<Token[]>([])
   const { isConnected } = useAccount()
 
   useEffect(() => {
@@ -55,8 +78,8 @@ export default function PaymentOptions({
       const filteredTokens = tokens.filter((token) => token.chains.includes(selectedChain))
       setAvailableTokens(filteredTokens)
 
-      // Reset token selection if current selection is not available
-      if (selectedToken && !filteredTokens.some((t) => t.id === selectedToken)) {
+      // 如果當前選擇的代幣在新的鏈上不可用，則重置選擇
+      if (selectedToken && !filteredTokens.some((t) => t.address === selectedToken)) {
         setSelectedToken("")
       }
     } else {
@@ -75,6 +98,7 @@ export default function PaymentOptions({
 
   const handleTokenChange = (value: string) => {
     setSelectedToken(value)
+    console.log("Selected token:", value)
   }
 
   const handleNext = () => {
@@ -82,13 +106,19 @@ export default function PaymentOptions({
       amount,
       selectedChain,
       selectedToken,
-      receiverToken: productData.token || "USDC",
+      receiverToken: productData.token || "usdc",
     })
     onNext()
   }
 
   const isProduct = !!productData.id
   const isFormValid = amount > 0 && selectedChain && selectedToken
+
+  // 獲取特定鏈上代幣的地址
+  const getTokenAddress = (tokenId: string, chainId: string) => {
+    const chainTokens = tokenList[chains.find(c => c.id === chainId)?.name || ""];
+    return chainTokens?.[tokenId]?.address || "";
+  }
 
   return (
     <div className="space-y-6">
@@ -144,11 +174,15 @@ export default function PaymentOptions({
                       <SelectValue placeholder="Select token" />
                     </SelectTrigger>
                     <SelectContent>
-                      {availableTokens.map((token) => (
-                        <SelectItem key={token.id} value={token.id}>
-                          {token.name}
-                        </SelectItem>
-                      ))}
+                      {availableTokens.map((token) => {
+                        // 獲取特定鏈上此代幣的地址
+                        const address = getTokenAddress(token.id, selectedChain);
+                        return (
+                          <SelectItem key={token.id} value={address}>
+                            {token.name}
+                          </SelectItem>
+                        );
+                      })}
                     </SelectContent>
                   </Select>
                 </div>

@@ -8,6 +8,7 @@ import { useFusionTransfer } from "@/lib/use-fusion-transfer"
 import { CHAIN_NAME_TO_ID } from "@/lib/chains"
 import anime from "animejs"
 
+
 interface TransactionProcessingProps {
   paymentDetails: PaymentDetails
   paymentMethod: "cctp" | "1inch"
@@ -27,6 +28,20 @@ export default function TransactionProcessing({
   const { executeTransfer, logs: cctpLogs } = useCrossChainTransfer()
   const { executeFusionTransfer, logs: fusionLogs, txHash: fusionTxHash } = useFusionTransfer()
   const [logs, setLogs] = useState<string[]>([])
+
+
+  // if (paymentMethod === "cctp") {
+    
+
+
+
+
+
+
+
+
+
+
 
   useEffect(() => {
     // Fetch token info for display

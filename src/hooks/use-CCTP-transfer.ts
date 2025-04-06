@@ -99,6 +99,8 @@ export interface CCTPTransferResult {
   isSuccess: boolean;
   // 錯誤狀態
   isError: boolean;
+  // 添加 attestation 結果
+  attestation: any | null;
 }
 
 // CCTP 實現的區塊鏈提供者連接器
@@ -128,6 +130,7 @@ export function useCCTPTransfer({
   const [isLoading, setIsLoading] = useState(false);
   const [isSuccess, setIsSuccess] = useState(false);
   const [isError, setIsError] = useState(false);
+  const [attestation, setAttestation] = useState<any | null>(null);
 
   // Wagmi hooks for wallet info, wallet client, and network switching
   const { address, chain } = useAccount();
@@ -195,58 +198,6 @@ export function useCCTPTransfer({
     });
     return formatUnits(balance as bigint, DEFAULT_DECIMALS);
   }, [address, getPublicClient]);
-
-  // Approve the USDC transfer on the source chain
-//   const approveUSDC = useCallback(async () => {
-//     setCurrentStep("approving");
-//     addLog("Approving USDC transfer...");
-
-//     if (!walletClient)
-//       throw new Error("Wallet client not available for approval transaction");
-    
-//     // 首先檢查 wagmi 配置中的鏈
-//     let sourceChainConfig = wagmiChains[sourceChainId as keyof typeof wagmiChains] as Chain | undefined;
-    
-//     // 如果 wagmi 配置中沒有，檢查本地定義的鏈
-//     if (!sourceChainConfig) {
-//       sourceChainConfig = allChains[sourceChainId as keyof typeof allChains];
-//     }
-    
-//     const usdcAddress = CHAIN_IDS_TO_USDC_ADDRESSES[sourceChainId as keyof typeof CHAIN_IDS_TO_USDC_ADDRESSES];
-//     const tokenMessengerAddress = CHAIN_IDS_TO_TOKEN_MESSENGER[sourceChainId as keyof typeof CHAIN_IDS_TO_TOKEN_MESSENGER];
-
-//     if (!sourceChainConfig || !usdcAddress || !tokenMessengerAddress) {
-//         throw new Error(`Configuration missing for source chain: ${sourceChainId}`);
-//     }
-
-//     try {
-//       const tx = await walletClient.sendTransaction({
-//         chain: sourceChainConfig,
-//         to: usdcAddress as Hex,
-//         data: encodeFunctionData({
-//           abi: [
-//             {
-//               type: "function",
-//               name: "approve",
-//               stateMutability: "nonpayable",
-//               inputs: [
-//                 { name: "spender", type: "address" },
-//                 { name: "amount", type: "uint256" },
-//               ],
-//               outputs: [{ name: "", type: "bool" }],
-//             },
-//           ],
-//           functionName: "approve",
-//           args: [tokenMessengerAddress as Hex, BigInt("10000000000")],
-//         }),
-//       });
-//       addLog(`USDC Approval Tx: ${tx}`);
-//       return tx;
-//     } catch (err) {
-//       setError("Approval failed");
-//       throw err;
-//     }
-//   }, [sourceChainId, walletClient, addLog, wagmiChains]);
 
   // Burn USDC on the source chain
   const burnUSDC = async (
@@ -338,7 +289,7 @@ export function useCCTPTransfer({
         throw new Error(`Source domain not found for chainId: ${sourceChainIdNum}`);
     }
 
-    const url = `https://iris-api-sandbox.circle.com/v2/messages/${sourceDomain}?transactionHash=${transactionHash}`;
+    const url = `https://iris-api.circle.com/v2/messages/${sourceDomain}?transactionHash=${transactionHash}`;
 
     let attempts = 0;
     const maxAttempts = 30;
@@ -349,7 +300,12 @@ export function useCCTPTransfer({
         const response = await axios.get(url);
         if (response.data?.messages?.[0]?.status === "complete") {
           addLog("Attestation retrieved!");
-          return response.data.messages[0];
+          // 返回完整的 message 對象，包含 attestation 字段
+          return {
+            transactionHash,
+            sourceChainId: sourceChainIdNum,
+            ...response.data.messages[0]
+          };
         }
         addLog(`Waiting for attestation... (${attempts + 1}/${maxAttempts})`);
         await new Promise((resolve) => setTimeout(resolve, waitTime));
@@ -429,6 +385,7 @@ export function useCCTPTransfer({
     setError(null);
     setIsSuccess(false);
     setCurrentStep("idle");
+    setAttestation(null);
 
     try {
       if (chain?.id !== sourceChainId) {
@@ -452,11 +409,12 @@ export function useCCTPTransfer({
           destAddress,
           transferType
       );
-      const attestation = await retrieveAttestation(burnTx, sourceChainId);
+      const attestationData = await retrieveAttestation(burnTx, sourceChainId);
       
+      setAttestation(attestationData);
       setCurrentStep("completed");
       setIsSuccess(true);
-      return attestation;
+      return attestationData;
     } catch (err) {
       setCurrentStep("error");
       setIsError(true);
@@ -495,6 +453,7 @@ export function useCCTPTransfer({
     setIsLoading(false);
     setIsSuccess(false);
     setIsError(false);
+    setAttestation(null);
   }, []);
 
   return {
@@ -507,5 +466,6 @@ export function useCCTPTransfer({
     isLoading,
     isSuccess,
     isError,
+    attestation,
   };
 }

@@ -258,15 +258,22 @@ const PaymentPage = () => {
   const isTransferSuccess = useCCTP ? isCCTPSuccess : isFusionSuccess;
   const isTransferError = useCCTP ? isCCTPError : isFusionError;
   const transferError = useCCTP ? cctpError : fusionError;
-  const transferTxHash = useCCTP ? "cctp-transfer-hash" : fusionTxHash;
+  const transferTxHash = useCCTP ? "cctp-transfer" : fusionTxHash;
 
   // 統一轉賬函數
   const transfer = async () => {
     if (useCCTP) {
       try {
-        await cctpTransfer();
-        // CCTP 轉賬成功時設置一個臨時 txHash，因為 useCCTPTransfer 不返回 txHash
-        setTxHash("cctp-transfer-success");
+        const attestationData = await cctpTransfer();
+        // 提取 CCTP attestation 數據並設置 txHash
+        if (attestationData?.attestation) {
+          // 使用 transactionHash 作為 txHash，但保存完整的 attestation 數據
+          setTxHash(attestationData.transactionHash);
+          // 保存完整的 attestation 數據，用於發送到後端
+          window.localStorage.setItem('cctp_attestation', JSON.stringify(attestationData));
+        } else {
+          setTxHash("cctp-transfer-success");
+        }
         return true;
       } catch (err) {
         console.error("CCTP transfer failed:", err);
@@ -288,33 +295,83 @@ const PaymentPage = () => {
 
   // Effect to handle transfer success
   useEffect(() => {
-    if (isTransferSuccess && transferTxHash) {
-      setTxHash(transferTxHash)
-      setCurrentStep(PaymentStep.TRANSACTION_SUBMISSION)
+    if (isTransferSuccess && (transferTxHash || txHash)) {
+      // 使用已存在的 txHash 或從 transfer 結果獲取的 transferTxHash
+      const finalTxHash = txHash || transferTxHash;
+      setTxHash(finalTxHash);
+      
+      // 關閉加載狀態
+      setIsLoading(false);
+      
+      // 立即轉到交易提交頁面
+      setCurrentStep(PaymentStep.TRANSACTION_SUBMISSION);
 
-      // Submit transaction ID to backend
-      fetch("http://localhost/tx/submit", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ tx_id: transferTxHash, product_id }),
-      })
-        .then((res) => res.json())
-        .then(() => {
-          setCurrentStep(PaymentStep.TRANSACTION_RESULT)
+      // 組裝發送到後端的數據
+      // 定義具有擴展屬性的類型
+      type TxData = {
+        tx_id: string;
+        product_id: string | string[] | undefined;
+        attestation?: string;
+        message?: string;
+        status?: string;
+        sourceChainId?: number;
+        [key: string]: any; // 允許添加其他屬性
+      };
+
+      // 確保 finalTxHash 不為 null
+      if (finalTxHash) {
+        let txData: TxData = {
+          tx_id: finalTxHash,
+          product_id,
+        };
+
+        // 如果是 CCTP 轉賬，從本地存儲獲取 attestation 數據
+        if (useCCTP) {
+          const storedAttestation = window.localStorage.getItem('cctp_attestation');
+          if (storedAttestation) {
+            try {
+              const attestationData = JSON.parse(storedAttestation);
+              txData = {
+                ...txData,
+                attestation: attestationData.attestation,
+                sourceChainId: attestationData.sourceChainId,
+              };
+            } catch (e) {
+              console.error("Failed to parse stored attestation data:", e);
+            }
+          }
+        }
+
+        // Submit transaction ID to backend
+        fetch("http://localhost:8000/tx/submit", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(txData),
         })
-        .catch((err) => {
-          console.error("Error submitting transaction:", err)
-          setError("Failed to submit transaction to server")
-          setCurrentStep(PaymentStep.TRANSACTION_RESULT)
-        })
+          .then((res) => res.json())
+          .then(() => {
+            setCurrentStep(PaymentStep.TRANSACTION_RESULT)
+          })
+          .catch((err) => {
+            console.error("Error submitting transaction:", err)
+            setError("Failed to submit transaction to server")
+            setCurrentStep(PaymentStep.TRANSACTION_RESULT)
+          })
+      } else {
+        console.error("Transaction hash is null, cannot submit to server");
+        setError("Failed to get transaction hash");
+        setCurrentStep(PaymentStep.TRANSACTION_RESULT);
+      }
     }
-  }, [isTransferSuccess, transferTxHash, product_id])
+  }, [isTransferSuccess, transferTxHash, product_id, useCCTP, txHash])
 
   // Effect to handle transfer error
   useEffect(() => {
     if (isTransferError && transferError) {
+      // 確保在錯誤情況下關閉加載狀態
+      setIsLoading(false);
       setError(transferError instanceof Error ? transferError.message : "Unknown transfer error")
       setCurrentStep(PaymentStep.TRANSACTION_RESULT)
     }
@@ -422,13 +479,21 @@ const PaymentPage = () => {
       return;
     }
     try {
+      // 在開始轉賬前設置加載狀態
+      setIsLoading(true);
       await transfer();
+      // 轉賬成功後不必立即關閉加載狀態，因為還需要等待交易確認
+      // 轉到下一步時會顯示其他加載指示器
     } catch (err) {
       console.error("Transfer failed:", err);
       setError(err instanceof Error ? err.message : "Unknown error occurred during transfer");
       setCurrentStep(PaymentStep.TRANSACTION_RESULT);
-    }
-  }
+      // 確保錯誤時關閉加載狀態
+    } finally {
+        setIsLoading(false);
+      }
+        
+}
 
   // Handle retry
   const handleRetry = () => {

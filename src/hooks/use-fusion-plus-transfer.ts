@@ -300,11 +300,33 @@ export const useFusionPlusTransfer = ({
         sdk.getReadyToAcceptSecretFills(orderHash)
           .then((fillsObject) => {
             if (fillsObject.fills && fillsObject.fills.length > 0) {
+              // 記錄需要提交的填充數量
+              const fillsCount = fillsObject.fills.length;
+              let completedSubmissions = 0;
+              
               fillsObject.fills.forEach(fill => {
                 // 提交對應的密碼
                 sdk.submitSecret(orderHash, secrets[fill.idx])
                   .then(() => {
                     console.log(`找到填充訂單！已提交密碼: ${JSON.stringify(secretHashes[fill.idx], null, 2)}`);
+                    completedSubmissions++;
+                    
+                    // 當所有密碼都已提交，標記為成功並結束輪詢
+                    if (completedSubmissions === fillsCount) {
+                      console.log("所有密碼已成功提交，完成交易流程");
+                      
+                      // 設置交易哈希 (如果尚未設置)
+                      if (!txHash) {
+                        const tempTxHash = `fill-order-${orderHash.substring(0, 10)}`;
+                        setTxHash(tempTxHash);
+                      }
+                      
+                      // 設置成功狀態
+                      setIsSuccess(true);
+                      
+                      // 清除輪詢間隔
+                      clearInterval(intervalId);
+                    }
                   })
                   .catch((error) => {
                     console.error(`提交密碼時出錯: ${JSON.stringify(error, null, 2)}`);
@@ -339,7 +361,7 @@ export const useFusionPlusTransfer = ({
         } else if ('tx' in result && typeof result.tx === 'object' && result.tx && 'hash' in result.tx && typeof result.tx.hash === 'string') {
           finalTxHash = result.tx.hash;
         } else {
-          console.warn("無法在 placeOrder 結果中找到交易哈希:", result);
+          console.log("無法在 placeOrder 結果中找到交易哈希:", result);
           // 如果沒有直接的哈希，可通過訂單狀態監控獲取
         }
       }
@@ -361,9 +383,7 @@ export const useFusionPlusTransfer = ({
       setIsError(true);
       setError(err instanceof Error ? err : new Error(String(err)));
       // 不再拋出，由 UI 顯示錯誤
-    } finally {
-      setIsLoading(false);
-    }
+    } 
   }, [
     walletClient, 
     publicClient,
